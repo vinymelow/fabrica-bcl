@@ -1,3 +1,4 @@
+supabase
 crewai
 fastapi
 uvicorn[standard]
