@@ -13,6 +13,6 @@ class CampaignDetails(BaseModel):
 
 class ProvisionRequest(BaseModel):
     """Define a estrutura completa do pedido de provisionamento."""
-    campaign_id: int
+    campaign_id: str
     user_email: str
     campaign_details: CampaignDetails
