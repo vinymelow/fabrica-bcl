@@ -8,6 +8,7 @@ from git import Repo
 logger = logging.getLogger(__name__)
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+# O GITHUB_USERNAME já não é estritamente necessário para criar o repo, mas é bom para a URL de push
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 
 def create_and_push_to_github(repo_path: str, repo_name: str) -> str:
@@ -20,7 +21,8 @@ def create_and_push_to_github(repo_path: str, repo_name: str) -> str:
     try:
         # Autentica-se no GitHub
         g = Github(GITHUB_TOKEN)
-        user = g.get_user(GITHUB_USERNAME)
+        # Obtém o utilizador AUTENTICADO (a correção está aqui)
+        user = g.get_user()
 
         # Cria o repositório privado
         logger.info(f"A criar repositório privado: {repo_name}")
