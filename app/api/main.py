@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Blue Connect Lead Factory",
     description="API para provisionar novas instâncias do BCL Activate",
-    version="0.1.0"
+    version="0.2.0" # Version bump for new features
 )
 
 # Configuração do CORS
 origins = [
     "http://localhost:5173",
-    "http://localhost:8080",  # <-- ADICIONE ESTA LINHA
+    "http://localhost:8080",
     "https://blueconnectlead.com",
     "https://www.blueconnectlead.com",
     "https://blueconnectlead.vercel.app" 
@@ -33,12 +33,18 @@ app.add_middleware(
 
 def provision_instance_flow(req: ProvisionRequest):
     """
-    Orquestra a criação completa de uma nova instância do BCL Activate.
+    Orquestra a criação completa de uma nova instância do BCL Activate,
+    com gestão de erros robusta.
     """
+    supabase_client = None # Inicializa fora do try para estar acessível no except
+    campaign_id = req.campaign_id # Guarda o ID para o bloco except
+
     try:
-        campaign_id = req.campaign_id
         user_email = req.user_email
         details = req.campaign_details
+        
+        # Cria o cliente Supabase para reportar o status
+        supabase_client = render_service._get_supabase_client()
         
         logger.info(f"Iniciando provisionamento para Campanha ID: {campaign_id}...")
 
@@ -51,17 +57,28 @@ def provision_instance_flow(req: ProvisionRequest):
         logger.info(f"Repositório criado no GitHub: {repo_url}")
 
         # 3. Fazer deploy no Render
-        service_url = render_service.deploy_to_render(repo_name, repo_url)
+        service_url = render_service.deploy_to_render(repo_name, repo_url, campaign_id)
         logger.info(f"Deploy iniciado no Render. URL do serviço será: {service_url}")
 
-        # 4. Notificar o usuário
+        # 4. Notificar o usuário (a atualização do status já foi feita pelo render_service)
         notification_service.send_provisioning_complete_email(user_email, service_url)
         logger.info(f"Processo de provisionamento para {campaign_id} concluído com sucesso.")
 
     except Exception as e:
-        logger.error(f"Falha no fluxo de provisionamento para Campanha ID: {campaign_id}. Erro: {e}", exc_info=True)
-        # Em um cenário real, poderíamos notificar a equipe de desenvolvimento sobre a falha.
-
+        error_message = str(e)
+        logger.error(f"Falha no fluxo de provisionamento para Campanha ID: {campaign_id}. Erro: {error_message}", exc_info=True)
+        # Tenta atualizar o status da campanha para 'failed'
+        if supabase_client and campaign_id:
+            try:
+                # Trunca a mensagem de erro para caber no campo do URL, se necessário
+                error_for_db = f"Erro: {error_message[:250]}"
+                supabase_client.table('campaigns').update({
+                    'status': 'failed',
+                    'service_url': error_for_db
+                }).eq('id', campaign_id).execute()
+                logger.info(f"Status da campanha {campaign_id} atualizado para 'failed'.")
+            except Exception as db_error:
+                logger.error(f"Não foi possível atualizar o status da campanha {campaign_id} para 'failed'. Erro no DB: {db_error}")
 
 @app.post("/provision/new-instance")
 async def provision_new_instance(req: ProvisionRequest, background_tasks: BackgroundTasks):

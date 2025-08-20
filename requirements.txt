@@ -6,4 +6,5 @@ pydantic
 PyGithub
 gitpython
 python-dotenv
+google-generativeai
 requests
