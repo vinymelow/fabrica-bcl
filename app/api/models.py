@@ -1,11 +1,18 @@
-# Ficheiro: app/api/models.py
-from pydantic import BaseModel, Field
+# fabrica-bcl/app/api/models.py
 
-class CampaignConfiguration(BaseModel):
-    client_name: str = Field(..., description="Nome do cliente final, ex: CaveLusa")
-    client_email: str = Field(..., description="Email do cliente para notificações")
-    campaign_goal: str = Field(..., description="Objetivo principal da campanha")
-    brand_tone: str = Field(..., description="Tom de voz da marca")
-    sender_persona: str = Field(..., description="Persona que envia a mensagem")
-    lead_source_type: str = Field(..., description="Tipo de fonte de leads, ex: webhook, meta")
-    
+from pydantic import BaseModel
+
+class CampaignDetails(BaseModel):
+    """Define a estrutura dos detalhes da campanha vindos do frontend."""
+    campaignName: str
+    objective: str
+    assistantPersona: str
+    toneOfVoice: str
+    offer: str
+    customerProfile: str
+
+class ProvisionRequest(BaseModel):
+    """Define a estrutura completa do pedido de provisionamento."""
+    campaign_id: int
+    user_email: str
+    campaign_details: CampaignDetails
