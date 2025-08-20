@@ -1,65 +1,83 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from .models import CampaignConfiguration
-import shutil
-import os
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import logging
 
-# Importar os nossos "operários" (os serviços)
-from ..services import project_builder, github_service, render_service, notification_service
+from app.api.models import ProvisionRequest
+from app.services import project_builder, github_service, render_service, notification_service
 
-app = FastAPI(title="BCL Provisioning API")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+app = FastAPI(
+    title="Blue Connect Lead Factory",
+    description="API para provisionar novas instâncias do BCL Activate",
+    version="0.1.0"
+)
 
-def provisioning_task(config: CampaignConfiguration):
+# Configuração do CORS
+origins = [
+    "http://localhost:5173",
+    "http://localhost:8080",  # <-- ADICIONE ESTA LINHA
+    "https://blueconnectlead.com",
+    "https://www.blueconnectlead.com",
+    "https://blueconnectlead.vercel.app" 
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def provision_instance_flow(req: ProvisionRequest):
     """
-    Esta é a tarefa de longa duração que corre em segundo plano.
-    É a nossa "linha de montagem".
+    Orquestra a criação completa de uma nova instância do BCL Activate.
     """
-    local_project_path = ""
     try:
-        # Passo 1 da linha de montagem: Construir o projeto local personalizado
-        print(f"INICIANDO: Construção do projeto para {config.client_name}")
-        local_project_path = project_builder.create_custom_project(config)
+        campaign_id = req.campaign_id
+        user_email = req.user_email
+        details = req.campaign_details
         
-        # Passo 2: Criar o repositório no GitHub e enviar o código
-        print("INICIANDO: Criação do repositório no GitHub")
-        repo_url = github_service.create_and_push_repo(local_project_path, config.client_name)
-        
-        # Passo 3: Fazer o deploy da nova instância no Render
-        print("INICIANDO: Deploy da nova instância no Render")
-        service_url = render_service.deploy_new_service(repo_url, config.client_name, config)
-        
-        # Passo 4: Notificar o cliente sobre o sucesso
-        if service_url:
-            print("INICIANDO: Notificação para o cliente")
-            notification_service.notify_client(config.client_email, service_url, config.lead_source_type)
-            print(f"SUCESSO: Provisionamento para {config.client_name} concluído!")
-        else:
-            raise Exception("O URL do serviço do Render não foi obtido.")
+        logger.info(f"Iniciando provisionamento para Campanha ID: {campaign_id}...")
+
+        # 1. Criar uma cópia personalizada do projeto
+        repo_path, repo_name = project_builder.create_project_from_template(campaign_id, details)
+        logger.info(f"Projeto criado em: {repo_path}")
+
+        # 2. Criar repositório no GitHub e fazer push
+        repo_url = github_service.create_and_push_to_github(repo_path, repo_name)
+        logger.info(f"Repositório criado no GitHub: {repo_url}")
+
+        # 3. Fazer deploy no Render
+        service_url = render_service.deploy_to_render(repo_name, repo_url)
+        logger.info(f"Deploy iniciado no Render. URL do serviço será: {service_url}")
+
+        # 4. Notificar o usuário
+        notification_service.send_provisioning_complete_email(user_email, service_url)
+        logger.info(f"Processo de provisionamento para {campaign_id} concluído com sucesso.")
 
     except Exception as e:
-        # Se qualquer passo falhar, registamos o erro.
-        # Num sistema real, enviaríamos uma notificação de erro para a nossa equipa.
-        print(f"ERRO DE PROVISIONAMENTO para {config.client_name}: {e}")
-    
-    finally:
-        # O último passo é sempre limpar a pasta temporária do projeto,
-        # quer o processo tenha tido sucesso ou tenha falhado.
-        if local_project_path and os.path.exists(local_project_path):
-            shutil.rmtree(local_project_path)
-            print(f"Limpeza: Pasta temporária {local_project_path} removida.")
+        logger.error(f"Falha no fluxo de provisionamento para Campanha ID: {campaign_id}. Erro: {e}", exc_info=True)
+        # Em um cenário real, poderíamos notificar a equipe de desenvolvimento sobre a falha.
 
 
 @app.post("/provision/new-instance")
-async def provision_new_instance(config: CampaignConfiguration, background_tasks: BackgroundTasks):
+async def provision_new_instance(req: ProvisionRequest, background_tasks: BackgroundTasks):
     """
-    Este é o nosso endpoint principal. Ele recebe a configuração, responde imediatamente
-    e adiciona a tarefa de provisionamento para ser executada em segundo plano.
+    Endpoint para solicitar a criação de uma nova instância.
+    Recebe os detalhes da campanha e inicia o processo em segundo plano.
     """
-    # Adiciona a nossa "linha de montagem" (provisioning_task) a uma fila de tarefas
-    background_tasks.add_task(provisioning_task, config)
-    
-    # Devolve uma resposta imediata ao utilizador
-    return {
-        "status": "iniciado", 
-        "message": f"O provisionamento para o cliente {config.client_name} foi iniciado. Você receberá uma notificação quando estiver concluído."
-    }
+    if not req.campaign_id or not req.user_email or not req.campaign_details:
+        raise HTTPException(status_code=400, detail="Dados da campanha, ID e e-mail do usuário são obrigatórios.")
+
+    logger.info(f"Requisição de provisionamento recebida para o usuário: {req.user_email}")
+    background_tasks.add_task(provision_instance_flow, req)
+
+    return {"message": f"Ativação iniciada! O motor da campanha '{req.campaign_details.campaignName}' está sendo construído. Você receberá um e-mail quando estiver pronto."}
+
+
+@app.get("/")
+def read_root():
+    return {"status": "A fábrica da Blue Connect Lead está funcionando!"}
